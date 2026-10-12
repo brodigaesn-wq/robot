@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kontrol Robot</title>
+<style>
+  :root { --bg:#14161c; --kartu:#1e222b; --garis:#2d3340; --teks:#eef0f5; --redup:#9aa3b5; --aksen:#4cc9f0; --ok:#5ee0a0; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--teks); font-family:system-ui,sans-serif; max-width:480px; margin-inline:auto; }
+  h1 { font-size:20px; margin:4px 0 12px; }
+  h2 { font-size:14px; color:var(--redup); font-weight:600; margin:0 0 10px; text-transform:uppercase; letter-spacing:.05em; }
+  .kartu { background:var(--kartu); border:1px solid var(--garis); border-radius:14px; padding:14px; margin-bottom:12px; }
+  button { font:inherit; color:var(--teks); background:#2a3040; border:1px solid var(--garis); border-radius:10px; padding:12px 8px; cursor:pointer; }
+  button:active { background:#38405a; }
+  button.utama { background:var(--aksen); color:#06202a; border:none; font-weight:700; width:100%; }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  input[type=text] { width:100%; font:inherit; color:var(--teks); background:#10131a; border:1px solid var(--garis); border-radius:10px; padding:12px; margin-bottom:8px; }
+  input[type=range] { width:100%; accent-color:var(--aksen); }
+  #status { font-size:14px; margin-bottom:12px; color:var(--redup); }
+  #status.ok { color:var(--ok); }
+  .baris { display:flex; justify-content:space-between; font-size:13px; color:var(--redup); }
+  .nonaktif { opacity:.45; pointer-events:none; }
+</style>
+</head>
+<body>
+<h1>Kontrol Robot</h1>
+<div id="status">Belum terhubung</div>
+
+<div class="kartu">
+  <button class="utama" id="tombolHubung">Hubungkan ke robot</button>
+</div>
+
+<div id="panel" class="nonaktif">
+  <div class="kartu">
+    <h2>Ekspresi</h2>
+    <div class="grid">
+      <button data-e="senang">Senang</button>
+      <button data-e="cinta">Jatuh cinta</button>
+      <button data-e="kaget">Kaget</button>
+      <button data-e="ngantuk">Ngantuk</button>
+      <button data-e="bersin">Bersin</button>
+      <button data-e="menguap">Menguap</button>
+      <button data-e="melamun">Melamun</button>
+      <button data-e="celingak">Celingak-celinguk</button>
+      <button data-e="kedip">Kedip</button>
+      <button data-e="lirik">Melirik</button>
+      <button data-e="tidur" style="grid-column:span 2">Tidur</button>
+    </div>
+  </div>
+
+  <div class="kartu">
+    <h2>Sapaan</h2>
+    <input type="text" id="nama" maxlength="9" placeholder="Nama (maks. 9 huruf)">
+    <button class="utama" id="kirimNama">Simpan &amp; sapa</button>
+  </div>
+
+  <div class="kartu">
+    <h2>Kecerahan layar</h2>
+    <input type="range" id="terang" min="0" max="255" value="255">
+    <div class="baris"><span>Redup</span><span>Terang</span></div>
+  </div>
+</div>
+
+<script>
+  // UUID harus sama persis dengan yang ada di kode robot
+  const UUID_LAYANAN = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+  const UUID_PESAN   = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+  const status = document.getElementById('status');
+  const panel = document.getElementById('panel');
+  const tombolHubung = document.getElementById('tombolHubung');
+  let kotakPesan = null;
+  let antrean = Promise.resolve();   // Bluetooth hanya boleh satu kiriman sekali jalan, jadi dibuat antre
+
+  function setStatus(teks, ok) {
+    status.textContent = teks;
+    status.className = ok ? 'ok' : '';
+  }
+
+  async function hubungkan() {
+    if (!navigator.bluetooth) {
+      setStatus('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome di Android, dan buka lewat alamat https.', false);
+      return;
+    }
+    try {
+      setStatus('Mencari robot...', false);
+      const perangkat = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [UUID_LAYANAN] }]
+      });
+      perangkat.addEventListener('gattserverdisconnected', () => {
+        kotakPesan = null;
+        panel.classList.add('nonaktif');
+        tombolHubung.textContent = 'Hubungkan ke robot';
+        setStatus('Terputus. Tekan tombol untuk menghubungkan lagi.', false);
+      });
+      const server = await perangkat.gatt.connect();
+      const layanan = await server.getPrimaryService(UUID_LAYANAN);
+      kotakPesan = await layanan.getCharacteristic(UUID_PESAN);
+      panel.classList.remove('nonaktif');
+      tombolHubung.textContent = 'Hubungkan ulang';
+      setStatus('Terhubung ke ' + (perangkat.name || 'robot'), true);
+    } catch (e) {
+      setStatus('Gagal: ' + e.message, false);
+    }
+  }
+
+  function kirim(teks) {
+    if (!kotakPesan) return;
+    const data = new TextEncoder().encode(teks);
+    antrean = antrean.then(async () => {
+      try {
+        if (kotakPesan.writeValueWithResponse) await kotakPesan.writeValueWithResponse(data);
+        else await kotakPesan.writeValue(data);
+      } catch (e) {
+        setStatus('Gagal kirim: ' + e.message, false);
+      }
+    });
+  }
+
+  tombolHubung.addEventListener('click', hubungkan);
+
+  document.querySelectorAll('button[data-e]').forEach(b => {
+    b.addEventListener('click', () => kirim('ekspresi:' + b.dataset.e));
+  });
+
+  document.getElementById('kirimNama').addEventListener('click', () => {
+    const nama = document.getElementById('nama').value.trim();
+    if (nama) kirim('nama:' + nama);
+  });
+
+  // Slider dikirim saat dilepas (bukan setiap geseran) supaya robot tidak kebanjiran perintah
+  document.getElementById('terang').addEventListener('change', e => kirim('terang:' + e.target.value));
+</script>
+</body>
+</html>
